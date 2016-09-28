@@ -29,13 +29,13 @@
 	| {module(), Req, any(), timeout()}
 	| {module(), Req, any(), timeout(), hibernate}
 	when Req::cowboy_req:req().
-%% @todo optional -callback terminate(terminate_reason(), cowboy_req:req(), state()) -> ok.
+
+-callback terminate(any(), cowboy_req:req(), any()) -> ok.
+-optional_callbacks([terminate/3]).
 
 -spec execute(Req, Env) -> {ok, Req, Env}
 	when Req::cowboy_req:req(), Env::cowboy_middleware:env().
-execute(Req, Env) ->
-	{_, Handler} = lists:keyfind(handler, 1, Env),
-	{_, HandlerOpts} = lists:keyfind(handler_opts, 1, Env),
+execute(Req, Env=#{handler := Handler, handler_opts := HandlerOpts}) ->
 	try Handler:init(Req, HandlerOpts) of
 		{ok, Req2, State} ->
 			Result = terminate(normal, Req2, State, Handler),
@@ -49,34 +49,15 @@ execute(Req, Env) ->
 		{Mod, Req2, State, Timeout, hibernate} ->
 			Mod:upgrade(Req2, Env, Handler, State, Timeout, hibernate)
 	catch Class:Reason ->
-		Stacktrace = erlang:get_stacktrace(),
-		cowboy_req:maybe_reply(Stacktrace, Req),
 		terminate({crash, Class, Reason}, Req, HandlerOpts, Handler),
-		erlang:Class([
-			{reason, Reason},
-			{mfa, {Handler, init, 2}},
-			{stacktrace, Stacktrace},
-			{req, cowboy_req:to_list(Req)},
-			{opts, HandlerOpts}
-		])
+		erlang:raise(Class, Reason, erlang:get_stacktrace())
 	end.
 
 -spec terminate(any(), Req, any(), module()) -> ok when Req::cowboy_req:req().
 terminate(Reason, Req, State, Handler) ->
 	case erlang:function_exported(Handler, terminate, 3) of
 		true ->
-			try
-				Handler:terminate(Reason, cowboy_req:lock(Req), State)
-			catch Class:Reason2 ->
-				erlang:Class([
-					{reason, Reason2},
-					{mfa, {Handler, terminate, 3}},
-					{stacktrace, erlang:get_stacktrace()},
-					{req, cowboy_req:to_list(Req)},
-					{state, State},
-					{terminate_reason, Reason}
-				])
-			end;
+			Handler:terminate(Reason, Req, State);
 		false ->
 			ok
 	end.
